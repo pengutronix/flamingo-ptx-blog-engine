@@ -1,0 +1,383 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+from tempfile import NamedTemporaryFile
+import datetime
+import readline
+import os
+
+from flamingo.core.utils.string import slugify
+from flamingo.core.context import Context
+from flamingo import Q
+
+from flamingo.core.utils.cli import (
+    gen_default_parser,
+    parse_args,
+    start_editor,
+    color,
+)
+
+SELECT_TAGS_TEMPLATE = """
+# To select a tag remove the '#'
+# You also can add new tags
+
+{tags}
+
+"""
+
+SELECT_FURTHER_READINGS_TEMPLATE = """
+# To select a page or blog post remove the '#'
+
+# blog posts
+#
+{blog_posts}
+
+# pages
+#
+{pages}
+
+"""
+
+BLOG_POST_TEMPLATE = """
+id: {id}  # don't change this!
+lang: {lang}  # don't change this!
+
+date: {date}
+slug: {id}
+authors:  # Your Name
+has_summary: False  # change this to True if you want your first paragraph to
+                    # be used as preview
+image: /images/blog/default-cover.png
+tags: {tags}
+
+further_readings:
+{further_readings}
+
+
+{title}
+{title_underline}
+
+Examples
+--------
+
+Links
+~~~~~
+
+
+Internal link: :link:`Homepage <pages/home/home_de.rst>`!
+
+External link: :link:`Google <https://www.google.de>`
+
+
+Images
+~~~~~~
+
+.. img:: /images/blog/default-cover.png
+    :align: left
+    :width: 300px
+
+    Lorem ipsum dolor sit amet
+
+Lorem ipsum dolor sit amet, consetetur sadipscing elitr, sed diam nonumy
+eirmod tempor invidunt ut labore et dolore magna aliquyam erat, sed diam
+voluptua. At vero eos et accusam et justo duo dolores et ea rebum.
+
+.. div::
+
+.. img:: /images/blog/default-cover.png
+    :align: right
+    :width: 300px
+
+    Lorem ipsum dolor sit amet
+
+Lorem ipsum dolor sit amet, consetetur sadipscing elitr, sed diam nonumy
+eirmod tempor invidunt ut labore et dolore magna aliquyam erat, sed diam
+voluptua. At vero eos et accusam et justo duo dolores et ea rebum.
+
+.. div::
+
+
+Galleries
+~~~~~~~~~
+
+.. gallery::
+
+    .. img:: /images/blog/default-cover.png
+
+        Image 1
+
+    .. img:: /images/blog/default-cover.png
+
+        Image 2
+
+
+Code
+~~~~
+
+.. code-block:: python
+    :license: foo
+
+    #!/usr/bin/env python
+    # -*- coding: utf-8 -*-
+
+    import foo
+
+    foo.bar()
+""".strip()
+
+
+def gen_settings():
+    parser = gen_default_parser(prog='flamingo blog')
+    namespace, settings = parse_args(parser)
+
+    return settings
+
+
+def gen_context():
+    settings = gen_settings()
+
+    return Context(settings)
+
+
+def _input(prompt, prefill=''):
+    def _pre_input_hook():
+        readline.insert_text(prefill)
+        readline.redisplay()
+
+    if prefill:
+        readline.set_pre_input_hook(_pre_input_hook)
+
+    try:
+        user_input = input('{}'.format(prompt))
+
+    except (KeyboardInterrupt, EOFError, ):
+        print(color('\nuser abort\n', 'red'))
+
+        raise SystemExit
+
+    finally:
+        if prefill:
+            readline.set_pre_input_hook()
+
+    return user_input
+
+
+def _non_empty_input(*args, **kwargs):
+    while True:
+        user_input = _input(*args, **kwargs)
+
+        if user_input:
+            return user_input
+
+        print(color('input may not be empty\n', 'red'))
+
+
+def select_option(prompt, options):
+    if isinstance(options, str):
+        options = list(options)
+
+    while True:
+        user_input = _input('{} [{}] '.format(
+            prompt, '/'.join(options + ['?'])))
+
+        if not user_input:
+            for option in options:
+                if option[0].isupper():
+                    return option
+
+            print(color('No default given\n', 'red'))
+
+        if user_input == '?':
+            print(color('Choose one option, if no option choosed the '
+                        'uppercase option is choosen\n', 'yellow'))
+
+            continue
+
+        if user_input.lower() not in [i.lower() for i in options]:
+            continue
+
+        return user_input
+
+
+def select_date():
+    now = datetime.datetime.today().strftime('%Y-%m-%d %H:%M:%S')
+
+    while True:
+        user_input = _input('Date (YYYY-MM-DD( HH:MM:SS)): ', now)
+
+        try:
+            user_input_date = user_input
+            user_input_time = ''
+
+            if ' ' in user_input:
+                user_input_date, user_input_time = user_input.split(' ')
+
+            datetime_args = [int(i) for i in user_input_date.split('-')]
+
+            if user_input_time:
+                datetime_args.extend(
+                    [int(i) for i in user_input_time.split(':')])
+
+            if len(datetime_args) == 3:
+                return datetime.date(*datetime_args)
+
+            return datetime.datetime(*datetime_args)
+
+        except Exception as e:
+            print(color(e, 'red'), '\n')
+
+
+def select_tags():
+    selected_tags = []
+
+    if select_option('Do you want to add tags to your post?', 'yN') == 'y':
+        print('\nsearching for existing tags')
+        context = gen_context()
+
+        tags = sorted(set(sum(context.contents.values('tags'), [])))
+        tags = ['# {}'.format(i) for i in tags]
+
+        content = SELECT_TAGS_TEMPLATE.format(tags='\n'.join(tags)).strip()
+
+        with NamedTemporaryFile() as f:
+            f.write(content.encode())
+            f.flush()
+
+            start_editor(f.name)
+
+            with open(f.name, 'r') as f2:
+                for line in f2:
+                    line = line.strip()
+
+                    if not line or line.startswith('#'):
+                        continue
+
+                    selected_tags.append(line)
+
+    return selected_tags
+
+
+def select_further_readings():
+    selected_paths = []
+
+    if select_option('Do you want to select further readings for your post?',
+                     'yN') == 'y':
+
+        print('\nlisting paths')
+        context = gen_context()
+
+        # find pages and blog_posts
+        blog_posts = context.contents.filter(
+            Q(path__startswith='blog/'),
+        ).order_by(
+            '-date',
+        ).values('path')
+
+        pages = context.contents.filter(
+            ~Q(path__startswith='blog/'),
+        ).values('path')
+
+        blog_posts = ['# {}'.format(i) for i in blog_posts]
+        pages = ['# {}'.format(i) for i in pages]
+
+        content = SELECT_FURTHER_READINGS_TEMPLATE.format(
+            blog_posts='\n'.join(blog_posts),
+            pages='\n'.join(pages),
+        ).strip()
+
+        # select paths
+        with NamedTemporaryFile() as f:
+            f.write(content.encode())
+            f.flush()
+
+            start_editor(f.name)
+
+            with open(f.name, 'r') as f2:
+                for line in f2:
+                    line = line.strip()
+
+                    if not line or line.startswith('#'):
+                        continue
+
+                    selected_paths.append(line)
+
+    return selected_paths
+
+
+def gen_id(date, slug):
+    return '{}-{}'.format(date.strftime('%Y-%m-%d'), slug)
+
+
+def gen_path(settings, date, slug, lang):
+    return '{}/blog/{}_{}/post_{}.rst'.format(
+        settings.CONTENT_ROOT,
+        date.strftime('%Y/%Y-%m-%d'),
+        slug,
+        lang,
+    )
+
+
+def mkdir_p(path):
+    dirname = os.path.dirname(path)
+
+    if not os.path.exists(dirname):
+        os.makedirs(dirname)
+
+
+# user input
+print('')
+title = _non_empty_input('Title: ')
+date = select_date()
+lang = select_option('Language:', ['de', 'En']).lower()
+
+translation = select_option(
+    'Do you want to create a translation for your post?', 'Yn').lower() == 'y'
+
+tags = select_tags()
+further_readings = select_further_readings()
+
+# generate files
+settings = gen_settings()
+slug = slugify(title)
+
+if further_readings:
+    further_readings = '\n'.join([
+        '    - {}'.format(i) for i in further_readings
+    ])
+
+else:
+    further_readings = ''
+
+context = {
+    'id': gen_id(date, slug),
+    'lang': lang,
+    'tags': ', '.join(tags),
+    'title': title,
+    'title_underline': len(title) * '=',
+    'date': date,
+    'further_readings': further_readings,
+}
+
+path = gen_path(settings, date, slug, context['lang'])
+mkdir_p(path)
+
+with open(path, 'w+') as f:
+    f.write(BLOG_POST_TEMPLATE.format(**context))
+
+print(path, 'generated')
+
+# generate translations
+if translation:
+    if context['lang'] == 'en':
+        context['lang'] = 'de'
+
+    else:
+        context['lang'] = 'en'
+
+    path = gen_path(settings, date, slug, context['lang'])
+    mkdir_p(path)
+
+    with open(path, 'w+') as f:
+        f.write(BLOG_POST_TEMPLATE.format(**context))
+
+    print(path, 'generated')
