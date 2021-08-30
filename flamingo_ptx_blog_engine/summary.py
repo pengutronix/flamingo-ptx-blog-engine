@@ -39,10 +39,29 @@ class Summary:
         if non_summary_divs:
             non_summary_divs.decompose()
 
-        return soup.find('p', recursive=False)
+        return str(soup.find('p', recursive=False) or '')
 
     def settings_setup(self, context):
         context.settings.EXTRA_CONTEXT['strip_html_tags'] = strip_html_tags
+
+    def templating_engine_setup(self, context, templating_engine):
+        def render_summary(content):
+            if '{' in content['summary']:
+                template = context.templating_engine.env.from_string(
+                    content['summary'],
+                )
+
+                summary = template.render(
+                    context=context,
+                    content=content,
+                )
+
+            else:
+                summary = content['summary']
+
+            return summary
+
+        templating_engine.env.globals['render_summary'] = render_summary
 
     def contents_parsed(self, context):
         # find summaries
