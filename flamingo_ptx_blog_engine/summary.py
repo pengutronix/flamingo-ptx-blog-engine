@@ -39,7 +39,9 @@ class Summary:
         if non_summary_divs:
             non_summary_divs.decompose()
 
-        return str(soup.find('p', recursive=False) or '')
+        p = soup.find('div', {'class': 'section'}).find('p', recursive=False)
+
+        return str(p or '')
 
     def settings_setup(self, context):
         context.settings.EXTRA_CONTEXT['strip_html_tags'] = strip_html_tags
