@@ -33,7 +33,7 @@ class Summary:
         soup = BeautifulSoup(content['content_body'], 'html.parser')
 
         non_summary_divs = soup.find(
-            'div', {'class': ['ptx-image', 'ptx-sidebar']}
+            'div', {'class': ['ptx-image', 'ptx-sidebar', 'ps-gallery']}
         )
 
         if non_summary_divs:
