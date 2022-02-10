@@ -13,7 +13,7 @@ setup(
     license='',
     packages=find_packages(),
     install_requires=[
-        'beautifulsoup4==4.5.3',
+        'beautifulsoup4',
     ],
     scripts=[
         'bin/flamingo-ptx-blog-new',
